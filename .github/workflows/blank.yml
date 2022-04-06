@@ -1,36 +1,92 @@
-# This is a basic workflow to help you get started with Actions
+import java.io.File;
+import java.util.Properties;
+import java.util.Set;
+import java.util.HashSet;
 
-name: CI
+import org.python.core.PyException;
+import org.python.core.PySystemState;
+import org.python.core.imp;
+import org.python.modules._py_compile;
 
-# Controls when the workflow will run
-on:
-  # Triggers the workflow on push or pull request events but only for the main branch
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+/**
+ * Compiles all python files in a directory to bytecode, and writes them to another directory,
+ * possibly the same one.
+ */
+public class compile {
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
+    public class BuildException extends RuntimeException {
+        public BuildException(String message) {
+        }
+    }
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
-jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
+    public void log(String message) {
+        System.out.println(message);
+    }
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
-    steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v3
+    public static void main(String[] args) {
+        String filename = args[0];
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+        Set<File> fileSet = new HashSet<File>();
+        
+        File file = new File(filename);
+        fileSet.add(file);
+        
+        compile c = new compile();
+        c.process(fileSet);
+    }
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
-        run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+    public compile() {
+    }
+
+    public void process(Set<File> toCompile) throws BuildException {
+        String destDir = "./tmp";
+
+        if (toCompile.size() == 0) {
+            return;
+        } else if (toCompile.size() > 1) {
+            log("Compiling " + toCompile.size() + " files");
+        } else if (toCompile.size() == 1) {
+            log("Compiling 1 file");
+        }
+        Properties props = new Properties();
+        props.setProperty(PySystemState.PYTHON_CACHEDIR_SKIP, "true");
+        PySystemState.initialize(System.getProperties(), props);
+        for (File src : toCompile) {
+            String name = _py_compile.getModuleName(src);
+            String compiledFilePath = name.replace('.', '/');
+            if (src.getName().endsWith("__init__.py")) {
+                compiledFilePath += "/__init__";
+            }
+            File compiled = new File(destDir, compiledFilePath + "$py.class");
+            compile(src, compiled, name);
+        }
+    }
+
+    /**
+     * Compiles the python file <code>src</code> to bytecode filling in <code>moduleName</code> as
+     * its name, and stores it in <code>compiled</code>. This is called by process for every file
+     * that's compiled, so subclasses can override this method to affect or track the compilation.
+     */
+    protected void compile(File src, File compiled, String moduleName) {
+        byte[] bytes;
+        try {
+            bytes = imp.compileSource(moduleName, src);
+        } catch (PyException pye) {
+            pye.printStackTrace();
+            throw new BuildException("Compile failed; see the compiler error output for details.");
+        }
+        File dir = compiled.getParentFile();
+        if (!dir.exists() && !compiled.getParentFile().mkdirs()) {
+            throw new BuildException("Unable to make directory for compiled file: " + compiled);
+        }
+        imp.cacheCompiledSource(src.getAbsolutePath(), compiled.getAbsolutePath(), bytes);
+    }
+
+    protected String getFrom() {
+        return "*.py";
+    }
+
+    protected String getTo() {
+        return "*$py.class";
+    }
+}
